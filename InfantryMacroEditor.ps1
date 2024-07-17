@@ -1,0 +1,655 @@
+﻿#<# Elevate to Administrator if not already, comment out if compiling the .exe with Invoke-PS2EXE
+If (-Not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    # Create a new process with elevated privileges
+    $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"" + $myInvocation.MyCommand.Definition + "`""
+    Start-Process powershell -Verb runAs -ArgumentList $arguments
+    Exit
+}
+#>
+
+# Load the necessary assemblies
+Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+
+# Define the necessary types outside of functions to avoid scoping issues
+Add-Type -TypeDefinition @"
+using System;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
+using System.Collections.ObjectModel;
+using System.Linq;
+
+public class FormattedPart : INotifyPropertyChanged {
+    private string text;
+    private string color;
+    private string fontWeight;
+
+    public string Text {
+        get { return text; }
+        set { text = value; OnPropertyChanged(); }
+    }
+
+    public string Color {
+        get { return color; }
+        set { color = value; OnPropertyChanged(); }
+    }
+
+    public string FontWeight {
+        get { return fontWeight; }
+        set { fontWeight = value; OnPropertyChanged(); }
+    }
+
+    public event PropertyChangedEventHandler PropertyChanged;
+
+    protected void OnPropertyChanged([CallerMemberName] string name = null) {
+        if (PropertyChanged != null) {
+            PropertyChanged.Invoke(this, new PropertyChangedEventArgs(name));
+        }
+    }
+}
+
+public class MacroItem : INotifyPropertyChanged {
+    private string keyBinding;
+    private string line;
+    private ObservableCollection<FormattedPart> formattedParts;
+
+    public string KeyBinding {
+        get { return keyBinding; }
+        set { keyBinding = value; OnPropertyChanged(); }
+    }
+
+    public string Line {
+        get { return line; }
+        set {
+            line = value;
+            OnPropertyChanged();
+            FormattedParts = FormatLine(line);
+        }
+    }
+
+    public ObservableCollection<FormattedPart> FormattedParts {
+        get { return formattedParts; }
+        set { formattedParts = value; OnPropertyChanged(); }
+    }
+
+    public event PropertyChangedEventHandler PropertyChanged;
+
+    protected void OnPropertyChanged([CallerMemberName] string name = null) {
+        if (PropertyChanged != null) {
+            PropertyChanged.Invoke(this, new PropertyChangedEventArgs(name));
+        }
+    }
+
+    private ObservableCollection<FormattedPart> FormatLine(string line) {
+        var formattedParts = new ObservableCollection<FormattedPart>();
+        var word = string.Empty;
+        var specialWord = string.Empty;
+        bool isSpecial = false;
+
+        for (int i = 0; i < line.Length; i++) {
+            var character = line[i];
+
+            if (character == ' ' || character == ',' || character == ':') {
+                if (!string.IsNullOrEmpty(word)) {
+                    AddFormattedPart(word, formattedParts);
+                    word = string.Empty;
+                }
+                formattedParts.Add(new FormattedPart {
+                    Text = character.ToString(),
+                    Color = "Black",
+                    FontWeight = "Normal"
+                });
+            } else if (character == '-') {
+                if (!string.IsNullOrEmpty(word)) {
+                    specialWord = word + character;
+                    word = string.Empty;
+                    isSpecial = true;
+                } else {
+                    word += character;
+                }
+            } else if (character == '%' && i + 1 < line.Length && char.IsDigit(line[i + 1])) {
+                if (!string.IsNullOrEmpty(word)) {
+                    AddFormattedPart(word, formattedParts);
+                    word = string.Empty;
+                }
+                word += character;
+                i++;
+                while (i < line.Length && char.IsDigit(line[i])) {
+                    word += line[i];
+                    i++;
+                }
+                AddFormattedPart(word, formattedParts);
+                word = string.Empty;
+                i--;
+            } else {
+                word += character;
+            }
+        }
+        if (!string.IsNullOrEmpty(word)) {
+            if (isSpecial) {
+                specialWord += word;
+                AddFormattedPart(specialWord, formattedParts);
+            } else {
+                AddFormattedPart(word, formattedParts);
+            }
+        }
+        return formattedParts;
+    }
+
+    private void AddFormattedPart(string word, ObservableCollection<FormattedPart> formattedParts) {
+        var formattedPart = new FormattedPart {
+            Text = word,
+            Color = "Black",
+            FontWeight = "Normal"
+        };
+
+        if (word.StartsWith("?")) {
+            formattedPart.Color = "Purple";
+        } else if (word.StartsWith("%") && word.Skip(1).All(char.IsDigit)) {
+            formattedPart.Color = "Gold";
+            formattedPart.FontWeight = "Bold";
+        } else if (word.All(char.IsDigit)) {
+            formattedPart.Color = "ForestGreen";
+            formattedPart.FontWeight = "Bold";
+        } else if (word.StartsWith("#") && word.Skip(1).All(char.IsDigit)) {
+            formattedPart.Color = "ForestGreen";
+            formattedPart.FontWeight = "Bold";
+        } else if (word.StartsWith("-") && word.Skip(1).All(char.IsDigit)) {
+            formattedPart.Color = "Red";
+        } else if (word.Contains("%")) {
+            int idx = word.IndexOf('%');
+            if (idx > 0) {
+                AddFormattedPart(word.Substring(0, idx), formattedParts);
+            }
+            formattedParts.Add(new FormattedPart {
+                Text = "%",
+                Color = "Gold",
+                FontWeight = "Bold"
+            });
+            AddFormattedPart(word.Substring(idx + 1), formattedParts);
+            return;
+        } else if (word.Contains(":") && word.Split(':')[1].StartsWith("-") && word.Split(':')[1].Skip(1).All(char.IsDigit)) {
+            formattedPart.Color = "Red";
+        } else if (word.All(char.IsLetterOrDigit)) {
+            formattedPart.Color = "Black";
+            formattedPart.FontWeight = "Normal";
+        }
+
+        formattedParts.Add(formattedPart);
+    }
+}
+
+public class BinaryReader {
+    public byte[] buffer;
+    public int position;
+
+    public BinaryReader(byte[] buffer) {
+        this.buffer = buffer;
+        this.position = 0;
+    }
+
+    public int GetInt32() {
+        int value = BitConverter.ToInt32(this.buffer, this.position);
+        this.position += 4;
+        return value;
+    }
+
+    public uint GetUint32() {
+        uint value = BitConverter.ToUInt32(this.buffer, this.position);
+        this.position += 4;
+        return value;
+    }
+
+    public string GetString(int length) {
+        string value = System.Text.Encoding.ASCII.GetString(this.buffer, this.position, length).TrimEnd('\0');
+        this.position += length;
+        return value;
+    }
+}
+
+public class BlobEntry {
+    public string name;
+    public int offset;
+    public int length;
+
+    public BlobEntry(string name, int offset, int length) {
+        this.name = name;
+        this.offset = offset;
+        this.length = length;
+    }
+}
+
+public class BlobFile {
+    public System.Collections.Generic.List<BlobEntry> entries;
+
+    public BlobFile() {
+        this.entries = new System.Collections.Generic.List<BlobEntry>();
+    }
+
+    public void Deserialize(byte[] buffer) {
+        BinaryReader reader = new BinaryReader(buffer);
+        int version = reader.GetInt32();
+        uint filecount = reader.GetUint32();
+
+        int nameLength = (version == 2) ? 32 : 14;
+
+        for (int i = 0; i < filecount; i++) {
+            string name = reader.GetString(nameLength);
+            uint offset = reader.GetUint32();
+            uint length = reader.GetUint32();
+            this.entries.Add(new BlobEntry(name, (int)offset, (int)length));
+        }
+    }
+}
+
+public class Audio {
+    [System.Runtime.InteropServices.DllImport("winmm.dll")]
+    public static extern bool PlaySound(string fname, int Mod, int flag);
+}
+"@
+
+# Define the XAML with a ComboBox for file selection
+$xaml = @"
+<Window
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="DataGrid Example" Height="600" Width="1300">
+    <Grid>
+        <ComboBox Name="fileComboBox" Width="200" Height="25" HorizontalAlignment="Left" Margin="10,10,0,0" VerticalAlignment="Top"/>
+        <DataGrid Name="dataGrid" AutoGenerateColumns="False" Margin="10,40,10,40" CanUserAddRows="False" CanUserDeleteRows="False" AlternatingRowBackground="#F0F0F0" RowBackground="White">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Key Binding" Binding="{Binding KeyBinding}" Width="100"/>
+                <DataGridTemplateColumn Header="Macro" Width="*">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <ItemsControl ItemsSource="{Binding FormattedParts}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal"/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Text}" Foreground="{Binding Color}" FontWeight="{Binding FontWeight}"/>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                    <DataGridTemplateColumn.CellEditingTemplate>
+                        <DataTemplate>
+                            <TextBox Text="{Binding Line, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellEditingTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+        <Button Name="testMacroButton" Content="Test Macro" Width="100" Height="25" HorizontalAlignment="Left" Margin="10,0,0,10" VerticalAlignment="Bottom"/>
+        <Button Name="saveButton" Content="Save" Width="75" Height="25" HorizontalAlignment="Right" Margin="0,0,10,10" VerticalAlignment="Bottom"/>
+    </Grid>
+</Window>
+"@
+
+# Load the XAML
+$reader = (New-Object System.Xml.XmlNodeReader ([xml]$xaml))
+$window = [Windows.Markup.XamlReader]::Load($reader)
+
+# Access the ComboBox, DataGrid, and Buttons
+$fileComboBox = $window.FindName("fileComboBox")
+$dataGrid = $window.FindName("dataGrid")
+$saveButton = $window.FindName("saveButton")
+$testMacroButton = $window.FindName("testMacroButton")
+
+# Ensure controls are not null
+if ($null -eq $fileComboBox -or $null -eq $dataGrid) {
+    Write-Error "Failed to find the necessary controls in the XAML."
+    pause
+    exit
+}
+
+# Define the registry path
+$regPath = "HKCU:\SOFTWARE\HarmlessGames\Infantry\Profile0\Keyboard"
+
+# Define initial values and increment steps
+$initialAltValue = 4743680
+$initialShiftValue = 4219392
+$initialCtrlValue = 4481536
+$initialLAltValue = 43024896  # LAlt+A
+$initialLAltNumValue = 43016192  # LAlt+0
+$incrementStep = 512
+
+# Additional starting key bindings and their initial values
+$initialRAltValue = 43278336  # RAlt+0
+$initialRAltAValue = 43287040  # RAlt+A
+$initialLShiftNumValue = 41967616  # LShift+0
+$initialLShiftValue = 41976320  # LShift+A
+$initialLControlNumValue = 42491904  # LControl+0
+$initialLControlValue = 42500608  # LControl+A
+$initialRShiftNumValue = 42229760  # RShift+0
+$initialRShiftValue = 42238464  # RShift+A
+$initialRControlNumValue = 42754048  # RControl+0
+$initialRControlValue = 42762752  # RControl+A
+
+# Define possible keys (A-Z and 0-9)
+$keys = @([char[]](65..90) + [char[]](48..57))  # A-Z and 0-9
+
+# Function to generate key bindings dynamically
+function Generate-KeyBindings {
+    param (
+        [string]$modifier,
+        [int]$initialValue,
+        [int]$incrementStep
+    )
+    
+    $bindings = @{}
+    $currentValue = $initialValue
+    
+    foreach ($key in $keys) {
+        $bindings[$currentValue] = "$modifier+$key"
+        $currentValue += $incrementStep
+    }
+    
+    return $bindings
+}
+
+# Function to generate key bindings dynamically for numeric keys
+function Generate-NumKeyBindings {
+    param (
+        [string]$modifier,
+        [int]$initialValue,
+        [int]$incrementStep
+    )
+    
+    $bindings = @{}
+    $currentValue = $initialValue
+    
+    for ($i = 0; $i -le 9; $i++) {
+        $bindings[$currentValue] = "$modifier+$i"
+        $currentValue += $incrementStep
+    }
+    
+    return $bindings
+}
+
+# Generate key bindings for Alt, Shift, Ctrl, and LAlt with alphanumeric characters
+$altBindings = Generate-KeyBindings -modifier "Alt" -initialValue $initialAltValue -incrementStep $incrementStep
+$shiftBindings = Generate-KeyBindings -modifier "Shift" -initialValue $initialShiftValue -incrementStep $incrementStep
+$ctrlBindings = Generate-KeyBindings -modifier "Ctrl" -initialValue $initialCtrlValue -incrementStep $incrementStep
+$laltBindings = Generate-KeyBindings -modifier "LAlt" -initialValue $initialLAltValue -incrementStep $incrementStep
+$laltNumBindings = Generate-NumKeyBindings -modifier "LAlt" -initialValue $initialLAltNumValue -incrementStep $incrementStep
+
+# Generate key bindings for additional key combinations
+$raltBindings = Generate-NumKeyBindings -modifier "RAlt" -initialValue $initialRAltValue -incrementStep $incrementStep
+$raltABindings = Generate-KeyBindings -modifier "RAlt" -initialValue $initialRAltAValue -incrementStep $incrementStep
+$lshiftNumBindings = Generate-NumKeyBindings -modifier "LShift" -initialValue $initialLShiftNumValue -incrementStep $incrementStep
+$lshiftBindings = Generate-KeyBindings -modifier "LShift" -initialValue $initialLShiftValue -incrementStep $incrementStep
+$lctrlNumBindings = Generate-NumKeyBindings -modifier "LControl" -initialValue $initialLControlNumValue -incrementStep $incrementStep
+$lctrlBindings = Generate-KeyBindings -modifier "LControl" -initialValue $initialLControlValue -incrementStep $incrementStep
+$rshiftNumBindings = Generate-NumKeyBindings -modifier "RShift" -initialValue $initialRShiftNumValue -incrementStep $incrementStep
+$rshiftBindings = Generate-KeyBindings -modifier "RShift" -initialValue $initialRShiftValue -incrementStep $incrementStep
+$rctrlNumBindings = Generate-NumKeyBindings -modifier "RControl" -initialValue $initialRControlNumValue -incrementStep $incrementStep
+$rctrlBindings = Generate-KeyBindings -modifier "RControl" -initialValue $initialRControlValue -incrementStep $incrementStep
+
+# Combine all key bindings into one hashtable
+$keyBindings = @{}
+$keyBindings += $altBindings
+$keyBindings += $shiftBindings
+$keyBindings += $ctrlBindings
+$keyBindings += $laltBindings
+$keyBindings += $laltNumBindings
+$keyBindings += $raltBindings
+$keyBindings += $raltABindings
+$keyBindings += $lshiftNumBindings
+$keyBindings += $lshiftBindings
+$keyBindings += $lctrlNumBindings
+$keyBindings += $lctrlBindings
+$keyBindings += $rshiftNumBindings
+$keyBindings += $rshiftBindings
+$keyBindings += $rctrlNumBindings
+$keyBindings += $rctrlBindings
+
+# Function to read and convert registry values
+function Get-ConvertedRegistryValues {
+    param (
+        [string]$Path,
+        [hashtable]$ValueMap,
+        [array]$KeysToFilter
+    )
+    
+    # Initialize an empty array to store the converted values
+    $convertedValues = @()
+    
+    # Loop through each key to filter
+    foreach ($key in $KeysToFilter) {
+        $keyName = $key.ToString()
+        try {
+            # Get the value from the registry
+            $keyValue = (Get-ItemProperty -Path $Path -Name $keyName).$keyName
+            #Write-Output "Reading Key: $keyName with Value: $keyValue"
+            
+            # Convert the value to the corresponding key binding
+            if ($ValueMap.ContainsKey($keyValue)) {
+                $keyBinding = $ValueMap[$keyValue]
+                $convertedValues += [PSCustomObject]@{
+                    Key     = $keyName
+                    Value   = $keyValue
+                    Binding = $keyBinding
+                }
+            } else {
+                $convertedValues += [PSCustomObject]@{
+                    Key     = $keyName
+                    Value   = $keyValue
+                    Binding = "Unknown"
+                }
+            }
+        } catch {
+            Write-Output "Failed to read key: $keyName"
+        }
+    }
+    
+    return $convertedValues
+}
+
+# Define the keys to filter
+$keysToFilter = (35..46) + (53..64)
+
+# Get and display the converted registry values
+$convertedRegistryValues = Get-ConvertedRegistryValues -Path $regPath -ValueMap $keyBindings -KeysToFilter $keysToFilter
+
+# Function to format a line with syntax highlighting
+function Format-Line {
+    param ($line)
+    $formattedParts = New-Object System.Collections.ArrayList
+
+    # Split the line into parts
+    $words = $line -split '(\s+|(?<=\?)|(?=\?)|(?<=#)|(?=#)|(?<=:)|(?=,)|(?<=,))'
+    foreach ($word in $words) {
+        # Determine color and font weight
+        $color, $fontWeight = if ($word -match '^\?[a-zA-Z]+') {
+            [System.Windows.Media.Brushes]::Purple, [System.Windows.FontWeights]::Normal
+        } elseif ($word -match '^-?\d+$' -and $word -lt 0) {
+            [System.Windows.Media.Brushes]::Red, [System.Windows.FontWeights]::Normal
+        } elseif ($word -match '^\d+$' -or $word -match '^#\d+$') {
+            [System.Windows.Media.Brushes]::ForestGreen, [System.Windows.FontWeights]::Bold
+        } else {
+            [System.Windows.Media.Brushes]::Black, [System.Windows.FontWeights]::Normal
+        }
+
+        # Create formatted part
+        $formattedPart = [PSCustomObject]@{
+            Text = $word
+            Color = $color
+            FontWeight = $fontWeight
+        }
+        # Add to the list
+        [void]$formattedParts.Add($formattedPart)
+    }
+
+    return $formattedParts
+}
+
+# Function to load and format the content from the selected file
+function Load-FileContent {
+    param ($filePath)
+
+    $fileContent = Get-Content -Path $filePath
+
+    # Prepare data for DataGrid
+    $data = [System.Collections.ObjectModel.ObservableCollection[MacroItem]]::new()
+    for ($i = 0; $i -lt $keysToFilter.Count; $i++) {
+        $keyName = $keysToFilter[$i].ToString()
+        $registryValue = ($convertedRegistryValues | Where-Object { $_.Key -eq $keyName })
+        $keyBinding = if ($registryValue) { $registryValue.Binding } else { "Unknown" }
+
+        $line = if ($i -lt $fileContent.Count) { $fileContent[$i] } else { "" }
+
+        $macroItem = [MacroItem]::new()
+        $macroItem.KeyBinding = $keyBinding
+        $macroItem.Line = $line
+
+        $data.Add($macroItem)
+    }
+
+    $dataGrid.ItemsSource = $data
+}
+
+$filePathMap = @{}
+
+# Load the list of .mc0 files into the ComboBox and store full paths in hashtable
+$infantryDirectory = 'C:\Program Files (x86)\Infantry Online'
+$mc0Files = Get-ChildItem -Path $infantryDirectory -Filter '*.mc0'
+
+foreach ($file in $mc0Files) {
+    $fileComboBox.Items.Add($file.Name)
+    $filePathMap[$file.Name] = $file.FullName
+}
+
+# Event handler for file selection change
+$fileComboBox.add_SelectionChanged({
+    $selectedFile = $fileComboBox.SelectedItem
+    if ($selectedFile) {
+        $filePath = $filePathMap[$selectedFile]
+        if ($filePath) {
+            Load-FileContent -filePath $filePath
+        }
+    }
+})
+
+# Function to check if running as administrator
+function Test-Admin {
+    $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    return $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# Add event handler for the Save button
+$saveButton.Add_Click({
+    # Check if running as administrator; if not, show error message and return
+    if (-not (Test-Admin)) {
+        [System.Windows.MessageBox]::Show("Unable to save, please relaunch the program as administrator.", "Error")
+        return
+    }
+
+    $selectedFile = $fileComboBox.SelectedItem
+    if ($selectedFile) {
+        # Retrieve the updated content from the DataGrid
+        $updatedContent = $dataGrid.ItemsSource | ForEach-Object { $_.Line }
+        # Attempt to write the updated content back to the file
+        try {
+            Set-Content -Path $selectedFile -Value $updatedContent -ErrorAction Stop
+            [System.Windows.MessageBox]::Show("File saved successfully!", "Success")
+        }
+        catch {
+            [System.Windows.MessageBox]::Show("Error saving file: $_", "Error")
+        }
+    } else {
+        [System.Windows.MessageBox]::Show("No file selected.", "Error")
+    }
+})
+
+# Function to play sound based on the macro text
+function Play-SoundFromMacro {
+    param ($macroText)
+
+    # Define the .cfg file path
+    $cfgPath = "C:\Program Files (x86)\Infantry Online\ctfpl.cfg"
+    $cfgContent = Get-Content -Path $cfgPath
+
+    # Extract Bong entries
+    $bongEntries = @{}
+    foreach ($line in $cfgContent) {
+        if ($line -match "^Bong(\d+)=(.+),(.+)$") {
+            $bongEntries[$matches[1]] = @{ Blob = $matches[2]; Sound = $matches[3] }
+        }
+    }
+
+    # Find the Bong reference in the macro text
+    if ($macroText -match "%(\d+)" -and $bongEntries.ContainsKey($matches[1])) {
+        $bongNumber = $matches[1]
+        $bongEntry = $bongEntries[$bongNumber]
+
+        if ($bongEntry) {
+            $blobFileName = $bongEntry.Blob
+            $soundFileName = $bongEntry.Sound
+
+            # Logic to play the sound file from the .blo file
+            $bloFilePath = "C:\Program Files (x86)\Infantry Online\$blobFileName.blo"
+            Write-Output "Loading .blo file: $bloFilePath"
+            $bloFileContent = [System.IO.File]::ReadAllBytes($bloFilePath)
+
+            $blobFile = [BlobFile]::new()
+            $blobFile.Deserialize($bloFileContent)
+
+            Write-Output "Blob file entries:"
+            $blobFile.entries | ForEach-Object { Write-Output "$($_.name): Offset = $($_.offset), Length = $($_.length)" }
+
+            $wavEntry = $blobFile.entries | Where-Object { $_.name -eq "$soundFileName.wav" }
+            if ($wavEntry -ne $null) {
+                Write-Output "Found sound file: $soundFileName.wav"
+                $wavData = New-Object byte[] $wavEntry.length
+                [System.Array]::Copy($bloFileContent, $wavEntry.offset, $wavData, 0, $wavEntry.length)
+
+                $wavTempPath = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "$soundFileName.wav")
+                [System.IO.File]::WriteAllBytes($wavTempPath, $wavData)
+
+                [Audio]::PlaySound($wavTempPath, 0, 0x0001)
+            } else {
+                Write-Output "Sound file $soundFileName.wav not found in .blo file."
+                [System.Windows.Forms.MessageBox]::Show("Sound file not found in .blo file.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+            }
+        } else {
+            Write-Output "Bong entry not found."
+            [System.Windows.Forms.MessageBox]::Show("Bong entry not found.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        }
+    } else {
+        Write-Output "No Bong reference found in the macro text."
+        [System.Windows.Forms.MessageBox]::Show("No Bong reference found in the macro text.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+    }
+}
+
+# Add event handler for the Test Macro button
+$testMacroButton.Add_Click({
+    $selectedItem = $dataGrid.SelectedItem
+    if ($selectedItem) {
+        $macroText = $selectedItem.Line
+        Play-SoundFromMacro -macroText $macroText
+    } else {
+        [System.Windows.MessageBox]::Show("No macro selected.", "Error")
+    }
+})
+
+<#
+# Add event handler for the CellEditEnding event
+$dataGrid.Add_CellEditEnding({
+    param($sender, $e)
+    # CellEditEnding event logic, you can leave it empty if no logic is needed here
+})
+
+
+$dataGrid.Add_CurrentCellChanged({
+    param($sender, $e)
+    # Force the DataGrid to refresh after the current cell changes
+    $dataGrid.Items.Refresh()
+})
+#>
+
+# Show the window
+$window.ShowDialog()
