@@ -6,17 +6,18 @@ If it does not run as admin, please check it in the properties (required in orde
 
 Made for Freeinfantry (https://www.freeinfantry.com), now on Steam!
 
-Features:
--Edit, sort, and view macro sets
--Test macro sounds (%21 - %28 team, %1 - %5 private)
--Syntax highlighting
+## Features:
+- Edit, sort, and view macro sets
+- Test macro sounds (%21 - %28 team, %1 - %5 private)
+- Syntax highlighting
 
-More to come:
--CTF specific features
-  -Build macros with easy pick and choose (weight calculation, item category restrictions, skill logic integration, etc.)
-  -Tips and tricks
-  -Recommended macro sets from veterans
-  -Test mode to practice macros outside of game
+## More to come:
+- CTF specific features
+- Build macros with easy pick and choose (weight calculation, item category restrictions, skill logic integration, etc.)
+- Tips and tricks
+- Recommended macro sets from veterans
+- Test mode to practice macros outside of game
+
 
 
 
