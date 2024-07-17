@@ -7,6 +7,8 @@ If it does not run as admin, please check it in the properties (required in orde
 
 Made for Freeinfantry ([https://www.freeinfantry.com](https://www.freeinfantry.com)), now on Steam!
 
+![image](https://github.com/user-attachments/assets/84656e18-a39b-4c8c-b493-456815399314)
+
 ## Features
 ---
 
