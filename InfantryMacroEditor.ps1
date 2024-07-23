@@ -1,4 +1,4 @@
-﻿<# Elevate to Administrator if not already, comment out if compiling the .exe with Invoke-PS2EXE
+﻿#<# Elevate to Administrator if not already, comment out if compiling the .exe with Invoke-PS2EXE
 If (-Not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
     # Create a new process with elevated privileges
     $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"" + $myInvocation.MyCommand.Definition + "`""
@@ -7,7 +7,7 @@ If (-Not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdent
 }
 
 # Enforce .EXE to run as admin with mt.exe
-& "C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\mt.exe" -manifest "InfantryMacroEditor.manifest" -outputresource:"InfantryMacroEditor.exe;1"
+# & "C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\mt.exe" -manifest "InfantryMacroEditor.manifest" -outputresource:"InfantryMacroEditor.exe;1"
 
 #>
 
