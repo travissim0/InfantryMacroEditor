@@ -1,14 +1,45 @@
-﻿#<# Elevate to Administrator if not already, comment out if compiling the .exe with Invoke-PS2EXE
+﻿<# Elevate to Administrator if not already, comment out if compiling the .exe with Invoke-PS2EXE
 If (-Not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
     # Create a new process with elevated privileges
     $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"" + $myInvocation.MyCommand.Definition + "`""
     Start-Process powershell -Verb runAs -ArgumentList $arguments
     Exit
 }
+
+# Enforce .EXE to run as admin with mt.exe
+& "C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\mt.exe" -manifest "InfantryMacroEditor.manifest" -outputresource:"InfantryMacroEditor.exe;1"
+
 #>
 
+$settingsFilePath = [System.IO.Path]::Combine([System.Environment]::GetFolderPath("ApplicationData"), "InfantryMacroEditor", "Settings.json")
+$settingsDirectory = [System.IO.Path]::GetDirectoryName($settingsFilePath)
+
+if (-not (Test-Path $settingsDirectory)) {
+    New-Item -Path $settingsDirectory -ItemType Directory
+
+    $settings = @{
+        MainUIBackgroundColor1 = 0
+        MainUIBackgroundColor2 = 0
+        DataGridBackgroundColor = 125
+        SyntaxCommandColor = "#FF800080"
+        SyntaxBongColor = "#FFFFD700" 
+        SyntaxPlusQTYColor = "#FF228B22"
+        SyntaxMinusQTYColor = "#FFFF0000"
+        SyntaxNormalColor = "#FF000000"
+    }
+
+    $settings | ConvertTo-Json | Set-Content -Path $settingsFilePath
+}
+
+$global:settings = Get-Content -Path $settingsFilePath | ConvertFrom-Json
+$global:SyntaxCommandColor = $settings.SyntaxCommandColor
+$global:SyntaxBongColor = $settings.SyntaxBongColor
+$global:SyntaxPlusQTYColor = $settings.SyntaxPlusQTYColor
+$global:SyntaxMinusQTYColor = $settings.SyntaxMinusQTYColor
+$global:SyntaxNormalColor = $settings.SyntaxNormalColor
+
 # Load the necessary assemblies
-Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
 
 # Define the necessary types outside of functions to avoid scoping issues
 Add-Type -TypeDefinition @"
@@ -36,6 +67,20 @@ public class FormattedPart : INotifyPropertyChanged {
     public string FontWeight {
         get { return fontWeight; }
         set { fontWeight = value; OnPropertyChanged(); }
+    }
+
+    public static string SyntaxCommand { get; set; }
+    public static string SyntaxBong { get; set; }
+    public static string SyntaxPlusQTY { get; set; }
+    public static string SyntaxMinusQTY { get; set; }
+    public static string SyntaxNormal { get; set; }
+
+    static FormattedPart() {
+        SyntaxCommand = "$global:SyntaxCommandColor";
+        SyntaxBong = "$global:SyntaxBongColor";
+        SyntaxPlusQTY = "$global:SyntaxPlusQTYColor";
+        SyntaxMinusQTY = "$global:SyntaxMinusQTYColor";
+        SyntaxNormal = "$global:SyntaxNormalColor";
     }
 
     public event PropertyChangedEventHandler PropertyChanged;
@@ -95,7 +140,7 @@ public class MacroItem : INotifyPropertyChanged {
                 }
                 formattedParts.Add(new FormattedPart {
                     Text = character.ToString(),
-                    Color = "Black",
+                    Color = FormattedPart.SyntaxNormal,
                     FontWeight = "Normal"
                 });
             } else if (character == '-') {
@@ -138,23 +183,25 @@ public class MacroItem : INotifyPropertyChanged {
     private void AddFormattedPart(string word, ObservableCollection<FormattedPart> formattedParts) {
         var formattedPart = new FormattedPart {
             Text = word,
-            Color = "Black",
+            Color = FormattedPart.SyntaxNormal,
             FontWeight = "Normal"
         };
 
         if (word.StartsWith("?")) {
-            formattedPart.Color = "Purple";
+            formattedPart.Color = FormattedPart.SyntaxCommand;
+            formattedPart.FontWeight = "Bold";
         } else if (word.StartsWith("%") && word.Skip(1).All(char.IsDigit)) {
-            formattedPart.Color = "Gold";
+            formattedPart.Color = FormattedPart.SyntaxBong;
             formattedPart.FontWeight = "Bold";
         } else if (word.All(char.IsDigit)) {
-            formattedPart.Color = "ForestGreen";
+            formattedPart.Color = FormattedPart.SyntaxPlusQTY;
             formattedPart.FontWeight = "Bold";
         } else if (word.StartsWith("#") && word.Skip(1).All(char.IsDigit)) {
-            formattedPart.Color = "ForestGreen";
+            formattedPart.Color = FormattedPart.SyntaxPlusQTY;
             formattedPart.FontWeight = "Bold";
         } else if (word.StartsWith("-") && word.Skip(1).All(char.IsDigit)) {
-            formattedPart.Color = "Red";
+            formattedPart.Color = FormattedPart.SyntaxMinusQTY;
+            formattedPart.FontWeight = "Bold";
         } else if (word.Contains("%")) {
             int idx = word.IndexOf('%');
             if (idx > 0) {
@@ -162,15 +209,15 @@ public class MacroItem : INotifyPropertyChanged {
             }
             formattedParts.Add(new FormattedPart {
                 Text = "%",
-                Color = "Gold",
+                Color = FormattedPart.SyntaxBong,
                 FontWeight = "Bold"
             });
             AddFormattedPart(word.Substring(idx + 1), formattedParts);
             return;
         } else if (word.Contains(":") && word.Split(':')[1].StartsWith("-") && word.Split(':')[1].Skip(1).All(char.IsDigit)) {
-            formattedPart.Color = "Red";
+            formattedPart.Color = FormattedPart.SyntaxMinusQTY;
         } else if (word.All(char.IsLetterOrDigit)) {
-            formattedPart.Color = "Black";
+            formattedPart.Color = FormattedPart.SyntaxNormal;
             formattedPart.FontWeight = "Normal";
         }
 
@@ -247,12 +294,12 @@ public class Audio {
 }
 "@
 
-# Define the XAML with a ComboBox for file selection
+# Define the main window XAML
 $xaml = @"
 <Window
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="DataGrid Example" Height="600" Width="1300">
+    Title="Infantry Macro Editor" Height="600" Width="1300">
     <Grid>
         <ComboBox Name="fileComboBox" Width="200" Height="25" HorizontalAlignment="Left" Margin="10,10,0,0" VerticalAlignment="Top"/>
         <DataGrid Name="dataGrid" AutoGenerateColumns="False" Margin="10,40,10,40" CanUserAddRows="False" CanUserDeleteRows="False" AlternatingRowBackground="#F0F0F0" RowBackground="White">
@@ -262,7 +309,7 @@ $xaml = @"
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <ItemsControl ItemsSource="{Binding FormattedParts}">
-                                <ItemsControl.ItemsPanel>
+                               <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
                                         <StackPanel Orientation="Horizontal"/>
                                     </ItemsPanelTemplate>
@@ -285,6 +332,34 @@ $xaml = @"
         </DataGrid>
         <Button Name="testMacroButton" Content="Test Macro" Width="100" Height="25" HorizontalAlignment="Left" Margin="10,0,0,10" VerticalAlignment="Bottom"/>
         <Button Name="saveButton" Content="Save" Width="75" Height="25" HorizontalAlignment="Right" Margin="0,0,10,10" VerticalAlignment="Bottom"/>
+        <Button Name="saveAsGlobalButton" Content="Save as Global Macro" Width="150" Height="25" HorizontalAlignment="Center" Margin="0,0,10,10" VerticalAlignment="Bottom"/>
+        <Button Name="settingsButton" Content="Settings" Width="100" Height="25" HorizontalAlignment="Right" Margin="0,0,90,10" VerticalAlignment="Bottom"/>
+    </Grid>
+</Window>
+"@
+
+# Define the settings window XAML
+$settingsXaml = @"
+<Window
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Settings" Height="600" Width="400">
+    <Grid Margin="10">
+        <TextBlock Text="Main UI Background Color 1" VerticalAlignment="Top" Margin="10,10,0,0"/>
+        <Slider Name="bgColor1Slider" Minimum="0" Maximum="255" Width="300" Height="25" HorizontalAlignment="Left" Margin="10,40,0,0" VerticalAlignment="Top"/>
+        <TextBlock Text="Main UI Background Color 2" VerticalAlignment="Top" Margin="10,80,0,0"/>
+        <Slider Name="bgColor2Slider" Minimum="0" Maximum="255" Width="300" Height="25" HorizontalAlignment="Left" Margin="10,110,0,0" VerticalAlignment="Top"/>
+        <TextBlock Text="DataGrid Row Background" VerticalAlignment="Top" Margin="10,150,0,0"/>
+        <Slider Name="dataGridBgSlider" Minimum="0" Maximum="255" Width="300" Height="25" HorizontalAlignment="Left" Margin="10,180,0,0" VerticalAlignment="Top"/>
+        <TextBlock Text="?command Color" VerticalAlignment="Top" Margin="10,220,0,0"/>
+        <Button Name="syntaxCommandColorButton" Content="Choose Color" Width="100" Height="25" HorizontalAlignment="Left" Margin="10,250,0,0" VerticalAlignment="Top"/>
+        <TextBlock Text="%1-30 Color" VerticalAlignment="Top" Margin="10,290,0,0"/>
+        <Button Name="syntaxBongColorButton" Content="Choose Color" Width="100" Height="25" HorizontalAlignment="Left" Margin="10,320,0,0" VerticalAlignment="Top"/>
+        <TextBlock Text="+Qty Color" VerticalAlignment="Top" Margin="10,360,0,0"/>
+        <Button Name="syntaxPlusQTYColorButton" Content="Choose Color" Width="100" Height="25" HorizontalAlignment="Left" Margin="10,390,0,0" VerticalAlignment="Top"/>
+        <TextBlock Text="-Qty Color" VerticalAlignment="Top" Margin="10,430,0,0"/>
+        <Button Name="syntaxMinusQTYColorButton" Content="Choose Color" Width="100" Height="25" HorizontalAlignment="Left" Margin="10,460,0,0" VerticalAlignment="Top"/>
+        <Button Name="saveSettingsButton" Content="Save" Width="100" Height="25" HorizontalAlignment="Right" Margin="0,0,10,10" VerticalAlignment="Bottom"/>
     </Grid>
 </Window>
 "@
@@ -293,15 +368,38 @@ $xaml = @"
 $reader = (New-Object System.Xml.XmlNodeReader ([xml]$xaml))
 $window = [Windows.Markup.XamlReader]::Load($reader)
 
+# Load the settings XAML
+$settingsReader = (New-Object System.Xml.XmlNodeReader ([xml]$settingsXaml))
+$settingsWindow = [Windows.Markup.XamlReader]::Load($settingsReader)
+
 # Access the ComboBox, DataGrid, and Buttons
 $fileComboBox = $window.FindName("fileComboBox")
 $dataGrid = $window.FindName("dataGrid")
 $saveButton = $window.FindName("saveButton")
 $testMacroButton = $window.FindName("testMacroButton")
+$saveAsGlobalButton = $window.FindName("saveAsGlobalButton")
+$settingsButton = $window.FindName("settingsButton")
+
+# Access the settings controls
+$bgColor1Slider = $settingsWindow.FindName("bgColor1Slider")
+$bgColor2Slider = $settingsWindow.FindName("bgColor2Slider")
+$dataGridBgSlider = $settingsWindow.FindName("dataGridBgSlider")
+$syntaxCommandColorButton = $settingsWindow.FindName("syntaxCommandColorButton")
+$syntaxBongColorButton = $settingsWindow.FindName("syntaxBongColorButton")
+$syntaxPlusQTYColorButton = $settingsWindow.FindName("syntaxPlusQTYColorButton")
+$syntaxMinusQTYColorButton = $settingsWindow.FindName("syntaxMinusQTYColorButton")
+$saveSettingsButton = $settingsWindow.FindName("saveSettingsButton")
 
 # Ensure controls are not null
 if ($null -eq $fileComboBox -or $null -eq $dataGrid) {
     Write-Error "Failed to find the necessary controls in the XAML."
+    pause
+    exit
+}
+
+# Ensure settings controls are not null
+if ($null -eq $bgColor1Slider -or $null -eq $bgColor2Slider -or $null -eq $dataGridBgSlider -or $null -eq $syntaxCommandColorButton -or $null -eq $syntaxBongColorButton -or $null -eq $syntaxPlusQTYColorButton -or $null -eq $saveSettingsButton) {
+    Write-Error "Failed to find the necessary settings controls in the XAML."
     pause
     exit
 }
@@ -424,7 +522,6 @@ function Get-ConvertedRegistryValues {
         try {
             # Get the value from the registry
             $keyValue = (Get-ItemProperty -Path $Path -Name $keyName).$keyName
-            #Write-Output "Reading Key: $keyName with Value: $keyValue"
             
             # Convert the value to the corresponding key binding
             if ($ValueMap.ContainsKey($keyValue)) {
@@ -465,13 +562,13 @@ function Format-Line {
     foreach ($word in $words) {
         # Determine color and font weight
         $color, $fontWeight = if ($word -match '^\?[a-zA-Z]+') {
-            [System.Windows.Media.Brushes]::Purple, [System.Windows.FontWeights]::Normal
+            $global:SyntaxCommandColor, [System.Windows.FontWeights]::Normal
         } elseif ($word -match '^-?\d+$' -and $word -lt 0) {
-            [System.Windows.Media.Brushes]::Red, [System.Windows.FontWeights]::Normal
+            $global:SyntaxMinusQTYColor, [System.Windows.FontWeights]::Bold
         } elseif ($word -match '^\d+$' -or $word -match '^#\d+$') {
-            [System.Windows.Media.Brushes]::ForestGreen, [System.Windows.FontWeights]::Bold
+            $global:SyntaxPlusQTYColor, [System.Windows.FontWeights]::Bold
         } else {
-            [System.Windows.Media.Brushes]::Black, [System.Windows.FontWeights]::Normal
+            $global:SyntaxNormalColor, [System.Windows.FontWeights]::Normal
         }
 
         # Create formatted part
@@ -554,8 +651,8 @@ $saveButton.Add_Click({
         $updatedContent = $dataGrid.ItemsSource | ForEach-Object { $_.Line }
         # Attempt to write the updated content back to the file
         try {
-            Set-Content -Path $selectedFile -Value $updatedContent -ErrorAction Stop
-            [System.Windows.MessageBox]::Show("File saved successfully!", "Success")
+            Set-Content -Path "$infantryDirectory\$selectedFile" -Value $updatedContent -ErrorAction Stop
+            [System.Windows.MessageBox]::Show("File saved successfully to $infantryDirectory\$selectedFile!", "Success")
         }
         catch {
             [System.Windows.MessageBox]::Show("Error saving file: $_", "Error")
@@ -636,20 +733,228 @@ $testMacroButton.Add_Click({
     }
 })
 
-<#
-# Add event handler for the CellEditEnding event
-$dataGrid.Add_CellEditEnding({
-    param($sender, $e)
-    # CellEditEnding event logic, you can leave it empty if no logic is needed here
+# Function to create the global macro update window
+function Create-GlobalUpdateWindow {
+    param ($updates, $keyBinding)
+
+    $xaml = @"
+<Window
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="Global Macro Update" Height="500" Width="800">
+    <Grid>
+        <TextBlock Text="Globally unify values for Key Binding $keyBinding" FontSize="20" HorizontalAlignment="Center" Margin="10,10,10,10" VerticalAlignment="Top"/>
+        <DataGrid Name="globalDataGrid" AutoGenerateColumns="False" Margin="10,50,10,50" CanUserAddRows="False" CanUserDeleteRows="False" AlternatingRowBackground="#F0F0F0" RowBackground="White">
+            <DataGrid.Columns>
+                <DataGridCheckBoxColumn Header="Select" Binding="{Binding IsChecked}" Width="50"/>
+                <DataGridTextColumn Header="File Name" Binding="{Binding FileName}" Width="*"/>
+                <DataGridTextColumn Header="Old Value" Binding="{Binding OldValue}" Width="*"/>
+                <DataGridTextColumn Header="New Value" Binding="{Binding NewValue}" Width="*"/>
+            </DataGrid.Columns>
+        </DataGrid>
+        <Button Name="confirmButton" Content="Confirm" Width="100" Height="25" HorizontalAlignment="Right" Margin="0,0,10,10" VerticalAlignment="Bottom"/>
+    </Grid>
+</Window>
+"@
+
+    # Load the XAML
+    $reader = (New-Object System.Xml.XmlNodeReader ([xml]$xaml))
+    $globalWindow = [Windows.Markup.XamlReader]::Load($reader)
+
+    # Access the DataGrid and Button
+    $globalDataGrid = $globalWindow.FindName("globalDataGrid")
+    $confirmButton = $globalWindow.FindName("confirmButton")
+
+    # Load the updates into the DataGrid
+    $globalDataGrid.ItemsSource = $updates
+
+    # Add event handler for the Confirm button
+    $confirmButton.Add_Click({
+        $selectedUpdates = $updates | Where-Object { $_.IsChecked }
+        $updatedFiles = @()
+        $excludedFiles = @()
+
+        foreach ($update in $selectedUpdates) {
+            $fileContent = Get-Content -Path $update.FilePath
+            $fileContent[$update.Index] = $update.NewValue
+            try {
+                Set-Content -Path $update.FilePath -Value $fileContent -ErrorAction Stop
+                $updatedFiles += $update.FileName
+            }
+            catch {
+                $excludedFiles += $update.FileName
+            }
+        }
+
+        [System.Windows.MessageBox]::Show("Key binding updated in $($updatedFiles.Count) of $($updates.Count) macro sets.`nUpdated files:`n$($updatedFiles -join "`n")`nExcluded files:`n$($excludedFiles -join "`n")", "Update Summary")
+        $globalWindow.Close()
+    })
+
+    $globalWindow.ShowDialog()
+}
+
+# Add event handler for the Save as Global Macro button
+$saveAsGlobalButton.Add_Click({
+    $selectedItem = $dataGrid.SelectedItem
+    if ($selectedItem) {
+        $macroText = $selectedItem.Line
+        $keyBinding = $selectedItem.KeyBinding
+
+        # Create a list to hold update details
+        $updates = @()
+
+        # Loop through each .mc0 file and prepare the update list
+        foreach ($file in $mc0Files) {
+            $filePath = $file.FullName
+            $fileContent = Get-Content -Path $filePath
+
+            for ($i = 0; $i -lt $keysToFilter.Count; $i++) {
+                $keyName = $keysToFilter[$i].ToString()
+                $registryValue = ($convertedRegistryValues | Where-Object { $_.Key -eq $keyName })
+                $currentKeyBinding = if ($registryValue) { $registryValue.Binding } else { "Unknown" }
+
+                $currentLine = if ($i -lt $fileContent.Count) { $fileContent[$i] } else { "" }
+
+                if ($currentKeyBinding -eq $keyBinding) {
+                    $update = [PSCustomObject]@{
+                        IsChecked = $false
+                        FileName = $file.Name
+                        FilePath = $filePath
+                        OldValue = $currentLine
+                        NewValue = $macroText
+                        Index = $i
+                    }
+                    $updates += $update
+                }
+            }
+        }
+
+        # Create and show the global update window
+        Create-GlobalUpdateWindow -updates $updates -keyBinding $keyBinding
+    } else {
+        [System.Windows.MessageBox]::Show("No macro selected.", "Error")
+    }
 })
 
+# Function to load settings from AppData
+function Load-Settings {
+    $settingsFilePath = [System.IO.Path]::Combine([System.Environment]::GetFolderPath("ApplicationData"), "InfantryMacroEditor", "Settings.json")
 
-$dataGrid.Add_CurrentCellChanged({
-    param($sender, $e)
-    # Force the DataGrid to refresh after the current cell changes
-    $dataGrid.Items.Refresh()
+    if (Test-Path $settingsFilePath) {
+        $global:settings = Get-Content -Path $settingsFilePath | ConvertFrom-Json
+
+        $bgColor1Slider.Value = $settings.MainUIBackgroundColor1
+        $bgColor2Slider.Value = $settings.MainUIBackgroundColor2
+        $dataGridBgSlider.Value = $settings.DataGridBackgroundColor
+    }
+}
+
+# Function to save settings to AppData
+function Save-Settings {
+    $settingsFilePath = [System.IO.Path]::Combine([System.Environment]::GetFolderPath("ApplicationData"), "InfantryMacroEditor", "Settings.json")
+    $settingsDirectory = [System.IO.Path]::GetDirectoryName($settingsFilePath)
+
+    $settings = @{
+        MainUIBackgroundColor1 = $bgColor1Slider.Value
+        MainUIBackgroundColor2 = $bgColor2Slider.Value
+        DataGridBackgroundColor = $dataGridBgSlider.Value
+        SyntaxCommandColor = $global:SyntaxCommandColor
+        SyntaxBongColor = $global:SyntaxBongColor
+        SyntaxPlusQTYColor = $global:SyntaxPlusQTYColor
+        SyntaxMinusQTYColor = $global:SyntaxMinusQTYColor
+    }
+
+    $settings | ConvertTo-Json | Set-Content -Path $settingsFilePath
+}
+
+function UpdateBackground {
+    $global:colorObj1 = New-Object System.Windows.Media.Color
+    $global:colorObj1.R = [byte]$bgColor1Slider.Value
+    $global:colorObj1.G = [byte]0
+    $global:colorObj1.B = [byte]0
+    $global:colorObj1.A = [byte]255  # Alpha (transparency)
+
+    $global:colorObj2 = New-Object System.Windows.Media.Color
+    $global:colorObj2.R = [byte]0
+    $global:colorObj2.G = [byte]$bgColor2Slider.Value
+    $global:colorObj2.B = [byte]0
+    $global:colorObj2.A = [byte]255  # Alpha (transparency)
+
+    $brush = New-Object System.Windows.Media.LinearGradientBrush
+    $brush.StartPoint = New-Object System.Windows.Point 0,0
+    $brush.EndPoint = New-Object System.Windows.Point 1,1
+
+    $gradientStop1 = New-Object System.Windows.Media.GradientStop
+    $gradientStop1.Color = $global:colorObj1
+    $gradientStop1.Offset = 0.0
+
+    $gradientStop2 = New-Object System.Windows.Media.GradientStop
+    $gradientStop2.Color = $global:colorObj2
+    $gradientStop2.Offset = 1.0
+
+    $brush.GradientStops.Add($gradientStop1)
+    $brush.GradientStops.Add($gradientStop2)
+
+    $window.Background = $brush
+}
+
+# Event handlers for real-time color changes
+$bgColor1Slider.Add_ValueChanged({ UpdateBackground })
+$bgColor2Slider.Add_ValueChanged({ UpdateBackground })
+$dataGridBgSlider.Add_ValueChanged({ 
+    $settings.DataGridBackgroundColor = [int]$dataGridBgSlider.Value
+    $dataGrid.RowBackground = New-Object Windows.Media.SolidColorBrush ([Windows.Media.Color]::FromArgb(255, [int]$settings.DataGridBackgroundColor, [int]$settings.DataGridBackgroundColor, [int]$settings.DataGridBackgroundColor))
+    $dataGrid.AlternatingRowBackground = New-Object Windows.Media.SolidColorBrush ([Windows.Media.Color]::FromArgb(255, [int]$settings.DataGridBackgroundColor, [int]$settings.DataGridBackgroundColor, [int]$settings.DataGridBackgroundColor))
 })
-#>
 
-# Show the window
+# Event handlers for syntax color buttons
+$syntaxCommandColorButton.Add_Click({
+    $colorDialog = New-Object System.Windows.Forms.ColorDialog
+    $colorDialog.Color = [System.Drawing.ColorTranslator]::FromHtml($global:SyntaxCommandColor)
+    if ($colorDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        $global:SyntaxCommandColor = [System.Drawing.ColorTranslator]::ToHtml($colorDialog.Color)
+    }
+})
+
+$syntaxBongColorButton.Add_Click({
+    $colorDialog = New-Object System.Windows.Forms.ColorDialog
+    $colorDialog.Color = [System.Drawing.ColorTranslator]::FromHtml($global:SyntaxBongColor)
+    if ($colorDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        $global:SyntaxBongColor = [System.Drawing.ColorTranslator]::ToHtml($colorDialog.Color)
+    }
+})
+
+$syntaxPlusQTYColorButton.Add_Click({
+    $colorDialog = New-Object System.Windows.Forms.ColorDialog
+    $colorDialog.Color = [System.Drawing.ColorTranslator]::FromHtml($global:SyntaxPlusQTYColor)
+    if ($colorDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        $global:SyntaxPlusQTYColor = [System.Drawing.ColorTranslator]::ToHtml($colorDialog.Color)
+    }
+})
+
+$syntaxMinusQTYColorButton.Add_Click({
+    $colorDialog = New-Object System.Windows.Forms.ColorDialog
+    $colorDialog.Color = [System.Drawing.ColorTranslator]::FromHtml($global:SyntaxMinusQTYColor)
+    if ($colorDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        $global:SyntaxMinusQTYColor = [System.Drawing.ColorTranslator]::ToHtml($colorDialog.Color)
+    }
+})
+
+# Add event handler for the Settings button
+$settingsButton.Add_Click({
+    Load-Settings
+    $settingsWindow.ShowDialog()
+})
+
+# Add event handler for the Save Settings button
+$saveSettingsButton.Add_Click({
+    Save-Settings
+    $settingsWindow.Close()
+})
+
+# Load settings and apply them on startup
+Load-Settings
+UpdateBackground
+
+# Show the main window
 $window.ShowDialog()
