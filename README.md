@@ -3,7 +3,8 @@
 
 Download InfantryMacroEditor.exe and run
 
-If it does not run as admin, please check it in the properties (required in order to save/edit the macro).
+Optional macro sets for every class included here: Infantry_Macros_for_Public_and_OVD.zip
+Unzip files to "C:\Program Files (x86)\Infantry Online" (unless it's installed elsewhere)
 
 Made for Freeinfantry ([https://www.freeinfantry.com](https://www.freeinfantry.com)), now on Steam!
 
