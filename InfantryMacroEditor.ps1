@@ -1,4 +1,4 @@
-﻿#<# Elevate to Administrator if not already, comment out if compiling the .exe with Invoke-PS2EXE
+#<# Elevate to Administrator if not already, comment out if compiling the .exe with Invoke-PS2EXE
 If (-Not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
     # Create a new process with elevated privileges
     $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"" + $myInvocation.MyCommand.Definition + "`""
@@ -26,6 +26,7 @@ if (-not (Test-Path $settingsDirectory)) {
         SyntaxPlusQTYColor = "#FF228B22"
         SyntaxMinusQTYColor = "#FFFF0000"
         SyntaxNormalColor = "#FF000000"
+        installPath = "C:\\Program Files (x86)\\Infantry Online"
     }
 
     $settings | ConvertTo-Json | Set-Content -Path $settingsFilePath
@@ -37,6 +38,7 @@ $global:SyntaxBongColor = $settings.SyntaxBongColor
 $global:SyntaxPlusQTYColor = $settings.SyntaxPlusQTYColor
 $global:SyntaxMinusQTYColor = $settings.SyntaxMinusQTYColor
 $global:SyntaxNormalColor = $settings.SyntaxNormalColor
+$global:installPath = $settings.installPath
 
 # Load the necessary assemblies
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
@@ -187,8 +189,8 @@ public class MacroItem : INotifyPropertyChanged {
             FontWeight = "Normal"
         };
 
-        if (word.StartsWith("?")) {
-            formattedPart.Color = FormattedPart.SyntaxCommand;
+        if (word.StartsWith("?") || (word.StartsWith("%") && word.Length > 1 && char.IsLetter(word[1]))) {
+            formattedPart.Color = FormattedPart.SyntaxCommand; // Assuming purple color is the same as SyntaxCommand
             formattedPart.FontWeight = "Bold";
         } else if (word.StartsWith("%") && word.Skip(1).All(char.IsDigit)) {
             formattedPart.Color = FormattedPart.SyntaxBong;
@@ -207,12 +209,24 @@ public class MacroItem : INotifyPropertyChanged {
             if (idx > 0) {
                 AddFormattedPart(word.Substring(0, idx), formattedParts);
             }
-            formattedParts.Add(new FormattedPart {
-                Text = "%",
-                Color = FormattedPart.SyntaxBong,
-                FontWeight = "Bold"
-            });
-            AddFormattedPart(word.Substring(idx + 1), formattedParts);
+            if (word.Length > idx + 1 && char.IsLetter(word[idx + 1])) {
+                // Handle % followed by letters (A-Z)
+                string remainingWord = word.Substring(idx + 1);
+                int endIdx = remainingWord.TakeWhile(c => char.IsLetter(c)).Count();
+                formattedParts.Add(new FormattedPart {
+                    Text = "%" + remainingWord.Substring(0, endIdx),
+                    Color = FormattedPart.SyntaxCommand, // Assuming purple color is the same as SyntaxCommand
+                    FontWeight = "Bold"
+                });
+                AddFormattedPart(remainingWord.Substring(endIdx), formattedParts);
+            } else {
+                formattedParts.Add(new FormattedPart {
+                    Text = "%",
+                    Color = FormattedPart.SyntaxBong,
+                    FontWeight = "Bold"
+                });
+                AddFormattedPart(word.Substring(idx + 1), formattedParts);
+            }
             return;
         } else if (word.Contains(":") && word.Split(':')[1].StartsWith("-") && word.Split(':')[1].Skip(1).All(char.IsDigit)) {
             formattedPart.Color = FormattedPart.SyntaxMinusQTY;
@@ -220,6 +234,7 @@ public class MacroItem : INotifyPropertyChanged {
             formattedPart.Color = FormattedPart.SyntaxNormal;
             formattedPart.FontWeight = "Normal";
         }
+
 
         formattedParts.Add(formattedPart);
     }
@@ -353,6 +368,8 @@ $settingsXaml = @"
         <Slider Name="dataGridBgSlider" Minimum="0" Maximum="255" Width="300" Height="25" HorizontalAlignment="Left" Margin="10,180,0,0" VerticalAlignment="Top"/>
         <TextBlock Text="?command Color" VerticalAlignment="Top" Margin="10,220,0,0"/>
         <Button Name="syntaxCommandColorButton" Content="Choose Color" Width="100" Height="25" HorizontalAlignment="Left" Margin="10,250,0,0" VerticalAlignment="Top"/>
+        <TextBlock Text="Install Path" VerticalAlignment="Top" Margin="160,220,0,0"/>
+        <TextBox Name="installPathTextBox" Width="200" Height="25" HorizontalAlignment="Left" Margin="160,250,0,0" VerticalAlignment="Top" IsReadOnly="False"/>
         <TextBlock Text="%1-30 Color" VerticalAlignment="Top" Margin="10,290,0,0"/>
         <Button Name="syntaxBongColorButton" Content="Choose Color" Width="100" Height="25" HorizontalAlignment="Left" Margin="10,320,0,0" VerticalAlignment="Top"/>
         <TextBlock Text="+Qty Color" VerticalAlignment="Top" Margin="10,360,0,0"/>
@@ -389,6 +406,8 @@ $syntaxBongColorButton = $settingsWindow.FindName("syntaxBongColorButton")
 $syntaxPlusQTYColorButton = $settingsWindow.FindName("syntaxPlusQTYColorButton")
 $syntaxMinusQTYColorButton = $settingsWindow.FindName("syntaxMinusQTYColorButton")
 $saveSettingsButton = $settingsWindow.FindName("saveSettingsButton")
+$installPathTextBox = $settingsWindow.FindName("installPathTextBox")
+
 
 # Ensure controls are not null
 if ($null -eq $fileComboBox -or $null -eq $dataGrid) {
@@ -612,8 +631,7 @@ function Load-FileContent {
 $filePathMap = @{}
 
 # Load the list of .mc0 files into the ComboBox and store full paths in hashtable
-$infantryDirectory = 'C:\Program Files (x86)\Infantry Online'
-$mc0Files = Get-ChildItem -Path $infantryDirectory -Filter '*.mc0'
+$mc0Files = Get-ChildItem -Path $global:installPath -Filter '*.mc0'
 
 foreach ($file in $mc0Files) {
     $fileComboBox.Items.Add($file.Name)
@@ -651,8 +669,8 @@ $saveButton.Add_Click({
         $updatedContent = $dataGrid.ItemsSource | ForEach-Object { $_.Line }
         # Attempt to write the updated content back to the file
         try {
-            Set-Content -Path "$infantryDirectory\$selectedFile" -Value $updatedContent -ErrorAction Stop
-            [System.Windows.MessageBox]::Show("File saved successfully to $infantryDirectory\$selectedFile!", "Success")
+            Set-Content -Path "$global:installPath\$selectedFile" -Value $updatedContent -ErrorAction Stop
+            [System.Windows.MessageBox]::Show("File saved successfully to $global:installPath\$selectedFile!", "Success")
         }
         catch {
             [System.Windows.MessageBox]::Show("Error saving file: $_", "Error")
@@ -846,6 +864,8 @@ function Load-Settings {
         $bgColor1Slider.Value = $settings.MainUIBackgroundColor1
         $bgColor2Slider.Value = $settings.MainUIBackgroundColor2
         $dataGridBgSlider.Value = $settings.DataGridBackgroundColor
+
+        $installPathTextBox.Text = $global:settings.installPath
     }
 }
 
@@ -854,6 +874,12 @@ function Save-Settings {
     $settingsFilePath = [System.IO.Path]::Combine([System.Environment]::GetFolderPath("ApplicationData"), "InfantryMacroEditor", "Settings.json")
     $settingsDirectory = [System.IO.Path]::GetDirectoryName($settingsFilePath)
 
+    # Ensure the settings directory exists
+    if (-not (Test-Path $settingsDirectory)) {
+        New-Item -Path $settingsDirectory -ItemType Directory
+    }
+
+    # Update settings with current values from the UI
     $settings = @{
         MainUIBackgroundColor1 = $bgColor1Slider.Value
         MainUIBackgroundColor2 = $bgColor2Slider.Value
@@ -862,8 +888,10 @@ function Save-Settings {
         SyntaxBongColor = $global:SyntaxBongColor
         SyntaxPlusQTYColor = $global:SyntaxPlusQTYColor
         SyntaxMinusQTYColor = $global:SyntaxMinusQTYColor
+        installPath = $installPathTextBox.Text # Update installPath from the TextBox
     }
 
+    # Convert settings to JSON and save to file
     $settings | ConvertTo-Json | Set-Content -Path $settingsFilePath
 }
 
@@ -942,9 +970,78 @@ $syntaxMinusQTYColorButton.Add_Click({
 
 # Add event handler for the Settings button
 $settingsButton.Add_Click({
+    # Recreate the settings window every time the button is clicked
+    $settingsReader = (New-Object System.Xml.XmlNodeReader ([xml]$settingsXaml))
+    $settingsWindow = [Windows.Markup.XamlReader]::Load($settingsReader)
+
+    # Access the settings controls
+    $bgColor1Slider = $settingsWindow.FindName("bgColor1Slider")
+    $bgColor2Slider = $settingsWindow.FindName("bgColor2Slider")
+    $dataGridBgSlider = $settingsWindow.FindName("dataGridBgSlider")
+    $syntaxCommandColorButton = $settingsWindow.FindName("syntaxCommandColorButton")
+    $syntaxBongColorButton = $settingsWindow.FindName("syntaxBongColorButton")
+    $syntaxPlusQTYColorButton = $settingsWindow.FindName("syntaxPlusQTYColorButton")
+    $syntaxMinusQTYColorButton = $settingsWindow.FindName("syntaxMinusQTYColorButton")
+    $saveSettingsButton = $settingsWindow.FindName("saveSettingsButton")
+    $installPathTextBox = $settingsWindow.FindName("installPathTextBox")
+
+    # Load the settings into the newly created window
     Load-Settings
+    
+    # Attach event handlers to the sliders and buttons for real-time updates
+    $bgColor1Slider.Add_ValueChanged({
+        $global:settings.MainUIBackgroundColor1 = [int]$bgColor1Slider.Value
+        UpdateBackground
+    })
+    
+    $bgColor2Slider.Add_ValueChanged({
+        $global:settings.MainUIBackgroundColor2 = [int]$bgColor2Slider.Value
+        UpdateBackground
+    })
+    
+    $dataGridBgSlider.Add_ValueChanged({
+        $global:settings.DataGridBackgroundColor = [int]$dataGridBgSlider.Value
+        $dataGrid.RowBackground = New-Object Windows.Media.SolidColorBrush ([Windows.Media.Color]::FromArgb(255, [int]$global:settings.DataGridBackgroundColor, [int]$global:settings.DataGridBackgroundColor, [int]$global:settings.DataGridBackgroundColor))
+        $dataGrid.AlternatingRowBackground = New-Object Windows.Media.SolidColorBrush ([Windows.Media.Color]::FromArgb(255, [int]$global:settings.DataGridBackgroundColor, [int]$global:settings.DataGridBackgroundColor, [int]$global:settings.DataGridBackgroundColor))
+    })
+
+    # Attach event handlers to color buttons
+    $syntaxCommandColorButton.Add_Click({
+        $colorDialog = New-Object System.Windows.Forms.ColorDialog
+        $colorDialog.Color = [System.Drawing.ColorTranslator]::FromHtml($global:settings.SyntaxCommandColor)
+        if ($colorDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            $global:settings.SyntaxCommandColor = [System.Drawing.ColorTranslator]::ToHtml($colorDialog.Color)
+        }
+    })
+    
+    $syntaxBongColorButton.Add_Click({
+        $colorDialog = New-Object System.Windows.Forms.ColorDialog
+        $colorDialog.Color = [System.Drawing.ColorTranslator]::FromHtml($global:settings.SyntaxBongColor)
+        if ($colorDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            $global:settings.SyntaxBongColor = [System.Drawing.ColorTranslator]::ToHtml($colorDialog.Color)
+        }
+    })
+    
+    $syntaxPlusQTYColorButton.Add_Click({
+        $colorDialog = New-Object System.Windows.Forms.ColorDialog
+        $colorDialog.Color = [System.Drawing.ColorTranslator]::FromHtml($global:settings.SyntaxPlusQTYColor)
+        if ($colorDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            $global:settings.SyntaxPlusQTYColor = [System.Drawing.ColorTranslator]::ToHtml($colorDialog.Color)
+        }
+    })
+    
+    $syntaxMinusQTYColorButton.Add_Click({
+        $colorDialog = New-Object System.Windows.Forms.ColorDialog
+        $colorDialog.Color = [System.Drawing.ColorTranslator]::FromHtml($global:settings.SyntaxMinusQTYColor)
+        if ($colorDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            $global:settings.SyntaxMinusQTYColor = [System.Drawing.ColorTranslator]::ToHtml($colorDialog.Color)
+        }
+    })
+
+    # Show the new instance of the settings window
     $settingsWindow.ShowDialog()
 })
+
 
 # Add event handler for the Save Settings button
 $saveSettingsButton.Add_Click({
