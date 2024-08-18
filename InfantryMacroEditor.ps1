@@ -370,6 +370,7 @@ $settingsXaml = @"
         <Button Name="syntaxCommandColorButton" Content="Choose Color" Width="100" Height="25" HorizontalAlignment="Left" Margin="10,250,0,0" VerticalAlignment="Top"/>
         <TextBlock Text="Install Path" VerticalAlignment="Top" Margin="160,220,0,0"/>
         <TextBox Name="installPathTextBox" Width="200" Height="25" HorizontalAlignment="Left" Margin="160,250,0,0" VerticalAlignment="Top" IsReadOnly="False"/>
+        <Button Name="browseInstallPathButton" Content="Browse..." Width="75" Height="25" HorizontalAlignment="Left" Margin="160,275,0,0" VerticalAlignment="Top"/>
         <TextBlock Text="%1-30 Color" VerticalAlignment="Top" Margin="10,290,0,0"/>
         <Button Name="syntaxBongColorButton" Content="Choose Color" Width="100" Height="25" HorizontalAlignment="Left" Margin="10,320,0,0" VerticalAlignment="Top"/>
         <TextBlock Text="+Qty Color" VerticalAlignment="Top" Margin="10,360,0,0"/>
@@ -888,7 +889,7 @@ function Save-Settings {
         SyntaxBongColor = $global:SyntaxBongColor
         SyntaxPlusQTYColor = $global:SyntaxPlusQTYColor
         SyntaxMinusQTYColor = $global:SyntaxMinusQTYColor
-        installPath = $installPathTextBox.Text # Update installPath from the TextBox
+        installPath = $installPathTextBox.Text
     }
 
     # Convert settings to JSON and save to file
@@ -926,48 +927,6 @@ function UpdateBackground {
     $window.Background = $brush
 }
 
-# Event handlers for real-time color changes
-$bgColor1Slider.Add_ValueChanged({ UpdateBackground })
-$bgColor2Slider.Add_ValueChanged({ UpdateBackground })
-$dataGridBgSlider.Add_ValueChanged({ 
-    $settings.DataGridBackgroundColor = [int]$dataGridBgSlider.Value
-    $dataGrid.RowBackground = New-Object Windows.Media.SolidColorBrush ([Windows.Media.Color]::FromArgb(255, [int]$settings.DataGridBackgroundColor, [int]$settings.DataGridBackgroundColor, [int]$settings.DataGridBackgroundColor))
-    $dataGrid.AlternatingRowBackground = New-Object Windows.Media.SolidColorBrush ([Windows.Media.Color]::FromArgb(255, [int]$settings.DataGridBackgroundColor, [int]$settings.DataGridBackgroundColor, [int]$settings.DataGridBackgroundColor))
-})
-
-# Event handlers for syntax color buttons
-$syntaxCommandColorButton.Add_Click({
-    $colorDialog = New-Object System.Windows.Forms.ColorDialog
-    $colorDialog.Color = [System.Drawing.ColorTranslator]::FromHtml($global:SyntaxCommandColor)
-    if ($colorDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-        $global:SyntaxCommandColor = [System.Drawing.ColorTranslator]::ToHtml($colorDialog.Color)
-    }
-})
-
-$syntaxBongColorButton.Add_Click({
-    $colorDialog = New-Object System.Windows.Forms.ColorDialog
-    $colorDialog.Color = [System.Drawing.ColorTranslator]::FromHtml($global:SyntaxBongColor)
-    if ($colorDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-        $global:SyntaxBongColor = [System.Drawing.ColorTranslator]::ToHtml($colorDialog.Color)
-    }
-})
-
-$syntaxPlusQTYColorButton.Add_Click({
-    $colorDialog = New-Object System.Windows.Forms.ColorDialog
-    $colorDialog.Color = [System.Drawing.ColorTranslator]::FromHtml($global:SyntaxPlusQTYColor)
-    if ($colorDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-        $global:SyntaxPlusQTYColor = [System.Drawing.ColorTranslator]::ToHtml($colorDialog.Color)
-    }
-})
-
-$syntaxMinusQTYColorButton.Add_Click({
-    $colorDialog = New-Object System.Windows.Forms.ColorDialog
-    $colorDialog.Color = [System.Drawing.ColorTranslator]::FromHtml($global:SyntaxMinusQTYColor)
-    if ($colorDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-        $global:SyntaxMinusQTYColor = [System.Drawing.ColorTranslator]::ToHtml($colorDialog.Color)
-    }
-})
-
 # Add event handler for the Settings button
 $settingsButton.Add_Click({
     # Recreate the settings window every time the button is clicked
@@ -984,21 +943,22 @@ $settingsButton.Add_Click({
     $syntaxMinusQTYColorButton = $settingsWindow.FindName("syntaxMinusQTYColorButton")
     $saveSettingsButton = $settingsWindow.FindName("saveSettingsButton")
     $installPathTextBox = $settingsWindow.FindName("installPathTextBox")
+    $browseInstallPathButton = $settingsWindow.FindName("browseInstallPathButton")
 
     # Load the settings into the newly created window
     Load-Settings
-    
+
     # Attach event handlers to the sliders and buttons for real-time updates
     $bgColor1Slider.Add_ValueChanged({
         $global:settings.MainUIBackgroundColor1 = [int]$bgColor1Slider.Value
         UpdateBackground
     })
-    
+
     $bgColor2Slider.Add_ValueChanged({
         $global:settings.MainUIBackgroundColor2 = [int]$bgColor2Slider.Value
         UpdateBackground
     })
-    
+
     $dataGridBgSlider.Add_ValueChanged({
         $global:settings.DataGridBackgroundColor = [int]$dataGridBgSlider.Value
         $dataGrid.RowBackground = New-Object Windows.Media.SolidColorBrush ([Windows.Media.Color]::FromArgb(255, [int]$global:settings.DataGridBackgroundColor, [int]$global:settings.DataGridBackgroundColor, [int]$global:settings.DataGridBackgroundColor))
@@ -1013,7 +973,7 @@ $settingsButton.Add_Click({
             $global:settings.SyntaxCommandColor = [System.Drawing.ColorTranslator]::ToHtml($colorDialog.Color)
         }
     })
-    
+
     $syntaxBongColorButton.Add_Click({
         $colorDialog = New-Object System.Windows.Forms.ColorDialog
         $colorDialog.Color = [System.Drawing.ColorTranslator]::FromHtml($global:settings.SyntaxBongColor)
@@ -1021,7 +981,7 @@ $settingsButton.Add_Click({
             $global:settings.SyntaxBongColor = [System.Drawing.ColorTranslator]::ToHtml($colorDialog.Color)
         }
     })
-    
+
     $syntaxPlusQTYColorButton.Add_Click({
         $colorDialog = New-Object System.Windows.Forms.ColorDialog
         $colorDialog.Color = [System.Drawing.ColorTranslator]::FromHtml($global:settings.SyntaxPlusQTYColor)
@@ -1029,7 +989,7 @@ $settingsButton.Add_Click({
             $global:settings.SyntaxPlusQTYColor = [System.Drawing.ColorTranslator]::ToHtml($colorDialog.Color)
         }
     })
-    
+
     $syntaxMinusQTYColorButton.Add_Click({
         $colorDialog = New-Object System.Windows.Forms.ColorDialog
         $colorDialog.Color = [System.Drawing.ColorTranslator]::FromHtml($global:settings.SyntaxMinusQTYColor)
@@ -1038,15 +998,30 @@ $settingsButton.Add_Click({
         }
     })
 
+    # Add event handler for the Browse button
+    $browseInstallPathButton.Add_Click({
+        # Create a new FolderBrowserDialog instance
+        $folderDialog = New-Object System.Windows.Forms.FolderBrowserDialog
+        $folderDialog.Description = "Select the Installation Folder"
+
+        # Set the initial selected path to the current install path
+        $folderDialog.SelectedPath = $installPathTextBox.Text
+
+        # Show the dialog and check if the user selects a folder
+        if ($folderDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            # Update the text box with the selected folder
+            $installPathTextBox.Text = $folderDialog.SelectedPath
+        }
+    })
+
+    # Add event handler for the Save Settings button
+    $saveSettingsButton.Add_Click({
+        Save-Settings
+        $settingsWindow.Close()
+    })
+
     # Show the new instance of the settings window
     $settingsWindow.ShowDialog()
-})
-
-
-# Add event handler for the Save Settings button
-$saveSettingsButton.Add_Click({
-    Save-Settings
-    $settingsWindow.Close()
 })
 
 # Load settings and apply them on startup
